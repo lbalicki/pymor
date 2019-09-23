@@ -11,6 +11,7 @@ ipywidgets
 matplotlib
 meshio
 mpi4py
+nbsphinx
 pillow
 pyamg
 pyevtk>=1.1
