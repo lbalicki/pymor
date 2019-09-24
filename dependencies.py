@@ -44,7 +44,7 @@ install_suggests = {'ipython>=5.0': 'an enhanced interactive python shell',
                     'PyQt5': 'solution visualization for builtin discretizations',
                     'ipywidgets': 'notebook GUI elements',
                     'pillow': 'image library used for bitmap data functions'}
-doc_requires = ['sphinx>=1.5', 'cython', 'numpy', 'nbsphinx']
+doc_requires = ['sphinx>=1.5', 'cython', 'numpy', 'nbsphinx', 'nbshpinx_link']
 ci_requires = ['pytest-cov', 'pytest-xdist', 'check-manifest', 'nbconvert',
                'readme_renderer[md]', 'rstcheck', 'codecov', 'twine', 'pytest-memprof',
                'testipynb']
