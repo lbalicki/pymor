@@ -8,6 +8,7 @@ ipywidgets
 matplotlib
 nbconvert
 nbsphinx
+nbsphinx_link
 pymor-nb2plots>=0.3
 pytest-cov
 pytest-memprof

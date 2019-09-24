@@ -12,6 +12,7 @@ matplotlib
 meshio
 mpi4py
 nbsphinx
+nbsphinx_link
 pillow
 pyamg
 pyevtk>=1.1

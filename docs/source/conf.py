@@ -87,9 +87,10 @@ extensions = ['sphinx.ext.autodoc',
               'sphinx.ext.viewcode',
               'sphinx.ext.intersphinx',
               'pymordocstring',
-              'nb2plots'
+              'nb2plots',
               'sphinx.ext.mathjax',
               'nbsphinx',
+              'nbsphinx_link',
               ]
 try:
     # was added in sphinx 1.4, some of our target  platforms have only 1.2.x
