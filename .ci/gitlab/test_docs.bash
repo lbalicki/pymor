@@ -30,10 +30,3 @@ echo ${SUDO} chown pymor docs/source/pymor_defaults.py
 ${SUDO} chown pymor docs/source/pymor_defaults.py
 
 make docs
-
-cd "${PYMOR_ROOT}"
-#ls -l public/
-rm -rf public/${CI_COMMIT_REF_SLUG}/
-mkdir -p public/${CI_COMMIT_REF_SLUG}/
-mv docs/_build/html/* public/${CI_COMMIT_REF_SLUG}/
-cp -r docs/public_root/* public/

@@ -2,7 +2,7 @@
 #   Edit and Re-run .ci/gitlab/template.ci.py instead       #
 
 stages:
-  - test
+  - pages
 
 .test_base:
     retry:
@@ -15,14 +15,40 @@ stages:
     except:
         - /^staging/.*$/i
 
-pages:
+.docker-in-docker:
+    tags:
+      - docker-in-docker
     extends: .test_base
-    image: pymor/testing:3.7
-    stage: test
-    cache:
-      paths:
-        - public
-    script: .ci/gitlab/test_docs.bash
+    retry:
+        max: 2
+        when:
+            - always
+    image: docker:stable
+    variables:
+        DOCKER_HOST: tcp://docker:2375/
+        DOCKER_DRIVER: overlay2
+    before_script:
+        - apk --update add openssh-client rsync git file bash python3
+        # hotfix for https://github.com/jupyter/repo2docker/issues/755
+        - pip3 install ruamel.yaml==0.15.100
+        - pip3 install jinja2 jupyter-repo2docker docker-compose
+        - 'export SHARED_PATH="${CI_PROJECT_DIR}/shared"'
+        - mkdir -p ${SHARED_PATH}
+    services:
+        - docker:dind
+    environment:
+        name: unsafe
+
+
+pages:
+    extends: .docker-in-docker
+    stage: pages
+    variables:
+        IMAGE: ${CI_REGISTRY_IMAGE}/docs:latest
+    script:
+        - apk --update add make
+        - .ci/gitlab/deploy_docs.bash
+
     # only:
     #   - master
     #   - tags
