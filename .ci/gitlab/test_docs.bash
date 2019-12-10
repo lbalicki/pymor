@@ -25,6 +25,10 @@ ${SUDO} pip install -r requirements-optional.txt || echo "Some optional modules 
 ${SUDO} pip install -U jupyterlab
 python setup.py build_ext -i
 
+ls -l docs/source/
+echo ${SUDO} chown pymor docs/source/pymor_defaults.py
+${SUDO} chown pymor docs/source/pymor_defaults.py
+
 make docs
 
 cd "${PYMOR_ROOT}"
