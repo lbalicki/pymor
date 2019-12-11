@@ -15,7 +15,7 @@ cd "${PYMOR_ROOT}"
 set -eux
 
 export USER=pymor
-make dockerdocs
+#make dockerdocs
 
 docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
 docker pull ${IMAGE}
@@ -25,7 +25,7 @@ mkdir -p public/${CI_COMMIT_REF_SLUG}/
 rm -rf public/${CI_COMMIT_REF_SLUG}/
 docker cp ${container}:/public/ public/
 
-mv docs/_build/html/* public/${CI_COMMIT_REF_SLUG}/
+rsync -a docs/_build/html/ public/${CI_COMMIT_REF_SLUG}/
 cp -r docs/public_root/* public/
 docker build -t ${IMAGE} -f .ci/docker/docs/Dockerfile .
 docker push ${IMAGE}
