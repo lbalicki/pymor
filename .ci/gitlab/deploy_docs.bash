@@ -23,8 +23,9 @@ container=$(docker create --entrypoint / ${IMAGE})
 
 PUBLIC_DIR=/tmp/public
 mkdir -p ${PUBLIC_DIR}/${CI_COMMIT_REF_SLUG}/
-rm -rf ${PUBLIC_DIR}/${CI_COMMIT_REF_SLUG}/
 docker cp ${container}:/public/ ${PUBLIC_DIR}/
+du -sch ${PUBLIC_DIR}/*
+rm -rf ${PUBLIC_DIR}/${CI_COMMIT_REF_SLUG}/
 
 rsync -a docs/_build/html/ ${PUBLIC_DIR}/${CI_COMMIT_REF_SLUG}/
 cp -r docs/public_root/* ${PUBLIC_DIR}
