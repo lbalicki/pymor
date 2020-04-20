@@ -14,7 +14,7 @@ from pymor.core.base import BasicObject, abstractmethod
 from pymor.core.defaults import defaults
 from pymor.core.exceptions import ExtensionError, AccuracyError
 from pymor.models.basic import StationaryModel, InstationaryModel
-from pymor.models.iosys import LTIModel, SecondOrderModel, LinearDelayModel
+from pymor.models.iosys import LTIModel, SecondOrderModel, LinearDelayModel, StokesDescriptorModel
 from pymor.operators.numpy import NumpyMatrixOperator
 from pymor.operators.constructions import Concatenation, InverseOperator
 
@@ -290,7 +290,7 @@ class InstationaryRBReductor(ProjectionBasedReductor):
 
 
 class LTIPGReductor(ProjectionBasedReductor):
-    """Petrov-Galerkin projection of an |LTIModel|.
+    """Petrov-Galerkin projection of an |LTIModel| or |StokesDescriptorModel|.
 
     Parameters
     ----------
@@ -305,7 +305,7 @@ class LTIPGReductor(ProjectionBasedReductor):
         Set to `True` if `W` and `V` are biorthonormal w.r.t. `fom.E`.
     """
     def __init__(self, fom, W, V, E_biorthonormal=False):
-        assert isinstance(fom, LTIModel)
+        assert isinstance(fom, (LTIModel, StokesDescriptorModel))
         super().__init__(fom, {'W': W, 'V': V})
         self.E_biorthonormal = E_biorthonormal
 

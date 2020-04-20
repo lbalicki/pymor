@@ -14,8 +14,8 @@ from pymor.algorithms.krylov import tangential_rational_krylov
 from pymor.algorithms.sylvester import solve_sylv_schur
 from pymor.algorithms.to_matrix import to_matrix
 from pymor.core.base import BasicObject
-from pymor.models.iosys import InputOutputModel, LTIModel
-from pymor.operators.constructions import IdentityOperator
+from pymor.models.iosys import InputOutputModel, LTIModel, StokesDescriptorModel
+from pymor.operators.constructions import AlgebraicConditionOperator, IdentityOperator
 from pymor.parameters.base import Mu
 from pymor.reductors.basic import LTIPGReductor
 from pymor.reductors.interpolation import LTIBHIReductor, TFBHIReductor
@@ -642,6 +642,177 @@ class TFIRKAReductor(GenericIRKAReductor):
         raise TypeError(
             f'The reconstruct method is not available for {self.__class__.__name__}.'
         )
+
+
+class StokesGapIRKAReductor(GenericIRKAReductor):
+    """Gap-IRKA reductor.
+
+    Parameters
+    ----------
+    fom
+        The full-order |StokesDescriptorModel| to reduce.
+    mu
+        |Parameter|.
+    """
+    def __init__(self, fom, mu=None):
+        assert isinstance(fom, StokesDescriptorModel)
+        super().__init__(fom, mu=mu)
+
+    def reduce(self, rom0_params, tol=1e-4, maxit=100, num_prev=1, conv_crit='h2-gap',
+               projection='orth'):
+        r"""Reduce using gap-IRKA.
+
+        Parameters
+        ----------
+        rom0_params
+            Can be:
+
+            - order of the reduced model (a positive integer),
+            - initial interpolation points (a 1D |NumPy array|),
+            - dict with `'sigma'`, `'b'`, `'c'` as keys mapping to
+              initial interpolation points (a 1D |NumPy array|), right
+              tangential directions (|VectorArray| from
+              `fom.input_space`), and left tangential directions
+              (|VectorArray| from `fom.output_space`), all of the same
+              length (the order of the reduced model),
+            - initial reduced-order model (|LTIModel|).
+
+            If the order of reduced model is given, initial
+            interpolation data is generated randomly.
+        tol
+            Tolerance for the largest change in interpolation points.
+        maxit
+            Maximum number of iterations.
+        num_prev
+            Number of previous iterations to compare the current
+            iteration to. A larger number can avoid occasional cyclic
+            behavior.
+        conv_crit
+            Convergence criterion:
+
+            - `'sigma'`: relative change in interpolation points
+            - `'h2-gap'`: :math:`\mathcal{H}_2-gap` distance of
+              reduced-order models divided by :math:`\mathcal{L}_2`
+              norm of new reduced-order model
+        projection
+            Projection method:
+
+            - `'orth'`: projection matrix is orthogonalized with respect
+              to the Euclidean inner product,
+            - `'Eorth'`: projection matrix is orthogonalized with
+              respect to the E product.
+
+        Returns
+        -------
+        rom
+            Reduced |LTIModel| model.
+        """
+        if not self.fom.cont_time:
+            raise NotImplementedError
+
+        self._clear_lists()
+        sigma, b, c = self._rom0_params_to_sigma_b_c(rom0_params)
+        self._store_sigma_b_c(sigma, b, c)
+        assert projection in ('orth', 'Eorth')
+
+        self.logger.info('Starting gap IRKA')
+        self._conv_data = (num_prev + 1) * [None]
+        if conv_crit == 'sigma':
+            self._conv_data[0] = sigma
+        for it in range(maxit):
+            self._set_V_W_reductor(sigma, b, c, projection)
+            rom = self._pg_reductor.reduce()
+            sigma, b, c, gap_rom = self._unstable_rom_to_sigma_b_c(rom)
+            self._store_sigma_b_c(sigma, b, c)
+            self._update_conv_data(sigma, gap_rom, conv_crit)
+            self._compute_conv_crit(rom, gap_rom, conv_crit, it)
+            if self.conv_crit[-1] < tol:
+                break
+
+        return rom
+
+    def _rom0_params_to_sigma_b_c(self, rom0_params):
+        self.logger.info('Generating initial interpolation data')
+        self._check_rom0_params(rom0_params)
+        if isinstance(rom0_params, Integral):
+            sigma, b, c = self._order_to_sigma_b_c(rom0_params)
+        elif isinstance(rom0_params, np.ndarray):
+            sigma = rom0_params
+            _, b, c = self._order_to_sigma_b_c(len(rom0_params))
+        elif isinstance(rom0_params, dict):
+            sigma = rom0_params['sigma']
+            b = rom0_params['b']
+            c = rom0_params['c']
+        else:
+            sigma, b, c, _ = self._unstable_rom_to_sigma_b_c(rom0_params)
+        return sigma, b, c
+
+    def _set_V_W_reductor(self, sigma, b, c, projection):
+        fom = (
+            self.fom.with_(
+                **{op: getattr(self.fom, op).assemble(mu=self.mu)
+                   for op in ['A', 'B', 'C', 'D', 'E']},
+                parameter_space=None,
+            )
+            if self.fom.parametric
+            else self.fom
+        )
+        Ahm = AlgebraicConditionOperator(self.fom.A, self.fom.G)
+        Ehm = AlgebraicConditionOperator(self.fom.E, self.fom.G)
+        self.V = tangential_rational_krylov(Ahm, Ehm, self.fom.B, b, sigma)
+        self.W = tangential_rational_krylov(Ahm, Ehm, self.fom.C, c, sigma, trans=True)
+        if projection == 'orth':
+            gram_schmidt(self.V, atol=0, rtol=0, copy=False)
+            gram_schmidt(self.W, atol=0, rtol=0, copy=False)
+        elif projection == 'biorth':
+            gram_schmidt_biorth(self.V, self.W, product=fom.E, copy=False)
+        self._pg_reductor = LTIPGReductor(fom, self.W, self.V,
+                                          projection == 'biorth')
+
+    @staticmethod
+    def _unstable_rom_to_sigma_b_c(rom):
+        poles, b, c, gap_rom = StokesGapIRKAReductor._unstable_lti_to_poles_b_c(rom)
+        return -poles, b, c, gap_rom
+
+    @staticmethod
+    def _unstable_lti_to_poles_b_c(rom):
+        A = to_matrix(rom.A, format='dense')
+        B = to_matrix(rom.B, format='dense')
+        C = to_matrix(rom.C, format='dense')
+        E = to_matrix(rom.E, format='dense')
+        # there seems to be issues with the default balanced=True option
+        P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), e=E.T, balanced=False)
+        F = E @ P @ C.T
+        AF = A - F @ C
+        poles, X = spla.eig(AF, E)
+        EX = E @ X
+        b = rom.B.source.from_numpy(spla.solve(EX, B))
+        c = rom.C.range.from_numpy((C @ X).T)
+        gap_rom = LTIModel.from_matrices(AF, F, C, E=E)
+        return poles, b, c, gap_rom
+
+    def _update_conv_data(self, sigma, gap_rom, conv_crit):
+        del self._conv_data[-1]
+        if conv_crit == 'sigma':
+            self._conv_data.insert(0, sigma)
+        else:
+            self._conv_data.insert(0, gap_rom)
+
+    def _compute_conv_crit(self, rom, gap_rom, conv_crit, it):
+        if conv_crit == 'sigma':
+            sigma = self._conv_data[0]
+            dist = min(spla.norm((sigma_old - sigma) / sigma_old, ord=np.inf)
+                       for sigma_old in self._conv_data[1:]
+                       if sigma_old is not None)
+        else:
+            # H2-gap norm of difference / L2-norm of new rom
+            # to do: compute and use coefficient in error estimate
+            dist = min((gap_rom_old - gap_rom).h2_norm() / rom.l2_norm()
+                       if gap_rom_old is not None
+                       else np.inf
+                       for gap_rom_old in self._conv_data[1:])
+        self.conv_crit.append(dist)
+        self.logger.info(f'Convergence criterion in iteration {it + 1}: {dist:e}')
 
 
 def _lti_to_poles_b_c(rom):

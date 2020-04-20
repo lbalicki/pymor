@@ -6,6 +6,7 @@ import numpy as np
 import scipy.linalg as spla
 import scipy.sparse as sps
 
+from pymor.algorithms.bernoulli import solve_bernoulli
 from pymor.algorithms.lyapunov import solve_lyap_lrcf, solve_lyap_dense
 from pymor.algorithms.to_matrix import to_matrix
 from pymor.core.cache import cached
@@ -654,13 +655,15 @@ class LTIModel(InputStateOutputModel):
             - `'c_lrcf'`: low-rank Cholesky factor of the controllability Gramian,
             - `'o_lrcf'`: low-rank Cholesky factor of the observability Gramian,
             - `'c_dense'`: dense controllability Gramian,
-            - `'o_dense'`: dense observability Gramian.
+            - `'o_dense'`: dense observability Gramian,
+            - `'gc_dense'`: dense controllability Gramian of stabilized system,
+            - `'go_dense'`: dense observability Gramian of stabilized system.
 
             .. note::
                 For `'c_lrcf'` and `'o_lrcf'` types, the method assumes the system is asymptotically
                 stable.
-                For `'c_dense'` and `'o_dense'` types, the method assumes there are no two system
-                poles which add to zero.
+                For `'c_dense'`, `'o_dense'`, `'gc_dense'` and `'go_dense'` types, the method
+                assumes there are no two system poles which add to zero.
         mu
             |Parameter values|.
 
@@ -668,12 +671,13 @@ class LTIModel(InputStateOutputModel):
         -------
         If typ is `'c_lrcf'` or `'o_lrcf'`, then the Gramian factor as a |VectorArray| from
         `self.A.source`.
-        If typ is `'c_dense'` or `'o_dense'`, then the Gramian as a |NumPy array|.
+        If typ is `'c_dense'`, `'o_dense'`, `'gc_dense'` or `'go_dense'`, then the Gramian as
+        a |NumPy array|.
         """
         if not self.cont_time:
             raise NotImplementedError
 
-        assert typ in ('c_lrcf', 'o_lrcf', 'c_dense', 'o_dense')
+        assert typ in ('c_lrcf', 'o_lrcf', 'c_dense', 'o_dense', 'gc_dense', 'go_dense')
 
         if not isinstance(mu, Mu):
             mu = self.parameters.parse(mu)
@@ -700,6 +704,58 @@ class LTIModel(InputStateOutputModel):
             return solve_lyap_dense(to_matrix(A, format='dense'),
                                     to_matrix(E, format='dense') if E else None,
                                     to_matrix(C, format='dense'),
+                                    trans=True, options=options_dense)
+        elif typ == 'gc_dense':
+            Ad = to_matrix(A, format='dense')
+            Ed = to_matrix(E, format='dense') if E else np.eye(Ad.shape[0])
+            Bd = to_matrix(B, format='dense')
+
+            ew, lev, rev = spla.eig(Ad, b=Ed, left=True)
+            unst_idx = np.where(ew.real > 0.)
+            unst_ews = ew[unst_idx]
+
+            if len(unst_ews) == 0:
+                return self.gramian('c_dense')
+
+            unst_revs = rev[:, unst_idx][:, 0, :]
+            unst_levs = lev[:, unst_idx][:, 0, :]
+
+            Et = unst_levs.conj().T @ Ed @ unst_revs
+            At = unst_levs.conj().T @ Ad @ unst_revs
+
+            Bt = unst_levs.conj().T @ Bd
+            Y = solve_bernoulli(At, Et, Bt, trans=True)
+            K = Bd.T @ unst_levs @ Y @ Y.conj().T @ unst_levs.conj().T @ Ed
+            K = K.real
+            A_stab = Ad - Bd @ K
+
+            return solve_lyap_dense(A_stab, Ed if E else None, Bd,
+                                    trans=False, options=options_dense)
+        elif typ == 'go_dense':
+            Ad = to_matrix(A, format='dense')
+            Ed = to_matrix(E, format='dense') if E else np.eye(Ad.shape[0])
+            Cd = to_matrix(C, format='dense')
+
+            ew, lev, rev = spla.eig(Ad, b=Ed, left=True)
+            unst_idx = np.where(ew.real > 0.)
+            unst_ews = ew[unst_idx]
+
+            if len(unst_ews) == 0:
+                return self.gramian('o_dense')
+
+            unst_revs = rev[:, unst_idx][:, 0, :]
+            unst_levs = lev[:, unst_idx][:, 0, :]
+
+            Et = unst_levs.conj().T @ Ed @ unst_revs
+            At = unst_levs.conj().T @ Ad @ unst_revs
+
+            Ct = Cd @ unst_revs
+            Y = solve_bernoulli(At, Et, Ct, trans=False)
+            K = Ed @ unst_revs @ Y @ Y.conj().T @ unst_revs.conj().T @ Cd.T
+            K = K.real
+            A_stab = Ad - K @ Cd
+
+            return solve_lyap_dense(A_stab, Ed if E else None, Cd,
                                     trans=True, options=options_dense)
 
     @cached
@@ -750,6 +806,32 @@ class LTIModel(InputStateOutputModel):
         return self._hsv_U_V(mu=mu)[0]
 
     @cached
+    def l2_norm(self, mu=None):
+        """Compute the L2-norm of the |LTIModel|.
+
+        Parameters
+        ----------
+        mu
+            |Parameter|.
+
+        Returns
+        -------
+        norm
+            L_2-norm.
+        """
+        if not self.cont_time:
+            raise NotImplementedError
+        mu = self.parse_parameter(mu)
+        if self.input_dim <= self.output_dim:
+            gc = self.gramian('gc_dense', mu=mu)
+            gcf = self.C.source.from_numpy(spla.cholesky(gc))
+            return np.sqrt(self.C.apply(gcf, mu=mu).l2_norm2().sum())
+        else:
+            go = self.gramian('go_dense', mu=mu)
+            gof = self.B.source.from_numpy(spla.cholesky(go))
+            return np.sqrt(self.B.apply_adjoint(gof, mu=mu).l2_norm2().sum())
+
+    @cached
     def h2_norm(self, mu=None):
         """Compute the H2-norm of the |LTIModel|.
 
@@ -777,6 +859,10 @@ class LTIModel(InputStateOutputModel):
         else:
             of = self.gramian('o_lrcf', mu=mu)
             return np.sqrt(self.B.apply_adjoint(of, mu=mu).l2_norm2().sum())
+
+    @cached
+    def linf_norm(self, mu=None, return_fpeak=False, ab13dd_equilibrate=False):
+        raise NotImplementedError
 
     @cached
     def hinf_norm(self, mu=None, return_fpeak=False, ab13dd_equilibrate=False):
@@ -2360,3 +2446,130 @@ class BilinearModel(InputStateOutputModel):
             f'    bilinear time-invariant\n'
             f'    solution_space:  {self.solution_space}'
         )
+
+
+class StokesDescriptorModel(InputStateOutputModel):
+    r"""Class for structured index-2 descriptor system.
+
+    This class describes input-state-output systems given by
+
+    .. math::
+        E x'(t)
+        & =
+            A x(t)
+            + G p(t)
+            + B u(t), \\
+        0
+        &=
+            G^T x(t), \\
+        y(t)
+        & =
+            C x(t)
+            + D u(t)
+
+    Parameters
+    ----------
+    A
+        The |Operator| A.
+    G
+        The |Operator| G.
+    B
+        The |Operator| B.
+    C
+        The |Operator| C.
+    D
+        The |Operator| D or `None` (then D is assumed to be zero).
+    E
+        The |Operator| E or `None` (then E is assumed to be identity).
+    estimator
+        An error estimator for the problem. This can be any object with an `estimate(U, mu, model)`
+        method. If `estimator` is not `None`, an `estimate(U, mu)` method is added to the model
+        which will call `estimator.estimate(U, mu, self)`.
+    visualizer
+        A visualizer for the problem. This can be any object with a `visualize(U, model, ...)`
+        method. If `visualizer` is not `None`, a `visualize(U, *args, **kwargs)` method is added to
+        the model which forwards its arguments to the visualizer's `visualize` method.
+    name
+        Name of the system.
+
+    Attributes
+    ----------
+    order
+        The order of the system (equal to A.source.dim).
+    input_dim
+        The number of inputs.
+    output_dim
+        The number of outputs.
+    A
+        The |Operator| A.
+    G
+        The |Operator| G.
+    B
+        The |Operator| B.
+    C
+        The |Operator| C.
+    D
+        The |Operator| D.
+    E
+        The |Operator| E.
+    """
+
+    def __init__(self, A, G, B, C, D, E=None, estimator=None, visualizer=None, name=None):
+
+        assert A.linear and A.source == A.range
+        assert B.linear and B.range == A.source
+        assert C.linear and C.source == A.range
+
+        D = D or ZeroOperator(C.range, B.source)
+        assert D.linear and D.source == B.source and D.range == C.range
+
+        E = E or IdentityOperator(A.source)
+        assert E.linear and E.source == E.range == A.source
+
+        self.cont_time = True
+
+        super().__init__(B.source, A.source, C.range, cont_time=True,
+                         estimator=estimator, visualizer=visualizer, name=name)
+
+        self.__auto_init(locals())
+
+    @cached
+    def to_lti(self):
+        """
+        Project idx-2 DAE to dense ODE.
+        """
+        # to do: use SVD of projector for smaller dimension
+        from pymor.algorithms.to_matrix import to_matrix
+
+        Anp = to_matrix(self.A, format='dense')
+        Enp = to_matrix(self.E, format='dense')
+        Gnp = to_matrix(self.G, format='dense')
+        Bnp = to_matrix(self.B, format='dense')
+        Cnp = to_matrix(self.C, format='dense').T
+
+        EGGT = sps.bmat([
+            [Enp, Gnp],
+            [Gnp.T, None]
+        ])
+        invEGGT = sps.linalg.splu(EGGT)
+
+        def brhs(rhs):
+            return np.vstack((rhs, np.zeros((Gnp.shape[1], rhs.shape[1]))))
+
+        Q = invEGGT.solve(brhs(Bnp))[:Anp.shape[0]]
+        B_lti = Enp @ Q
+
+        Q = invEGGT.solve(brhs(Cnp))[:Anp.shape[0]]
+        C_lti = Enp @ Q
+
+        Q = invEGGT.solve(brhs(Anp))[:Anp.shape[0]]
+        PA = Enp @ Q
+        Q = invEGGT.solve(brhs(PA.T))[:Anp.shape[0]]
+        A_lti = Q.T @ Enp.T
+
+        Q = invEGGT.solve(brhs(Enp))[:Anp.shape[0]]
+        PE = Enp @ Q
+        Q = invEGGT.solve(brhs(PE.T))[:Anp.shape[0]]
+        E_lti = Q.T @ Enp.T
+
+        return LTIModel.from_matrices(A_lti, B_lti, C_lti.T, None, E_lti)

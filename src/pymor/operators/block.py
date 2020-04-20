@@ -6,7 +6,9 @@ import numpy as np
 
 from pymor.operators.constructions import IdentityOperator, ZeroOperator
 from pymor.operators.interface import Operator
-from pymor.vectorarrays.block import BlockVectorSpace
+from pymor.vectorarrays.block import BlockVectorSpace, BlockVectorArray
+
+from pymor.operators.numpy import NumpyMatrixOperator
 
 
 class BlockOperatorBase(Operator):
@@ -85,6 +87,33 @@ class BlockOperatorBase(Operator):
                 U_blocks[j] += Uj
 
         return self.source.make_array(U_blocks) if self.blocked_source else U_blocks[0]
+
+    # remove this and add NumpyBlockOperator
+    def apply_inverse(self, V, mu=None, least_squares=False):
+        from pymor.algorithms.to_matrix import to_matrix
+        mat = NumpyMatrixOperator(to_matrix(self))
+        va = mat.source.from_numpy(V.to_numpy())
+        np_sol = mat.apply_inverse(va, mu=mu, least_squares=least_squares).to_numpy()
+        block_sol = []
+        start, end = 0, 0
+        for i in range(len(self.source.subspaces)):
+            end += self.source.subspaces[i].dim
+            block_sol.append(np_sol[:, start:end])
+            start += self.source.subspaces[i].dim
+        return BlockVectorArray([self.source.subspaces[i].from_numpy(block_sol[i]) for i in range(len(block_sol))])
+
+    def apply_inverse_adjoint(self, V, mu=None, least_squares=False):
+        from pymor.algorithms.to_matrix import to_matrix
+        mat = NumpyMatrixOperator(to_matrix(self))
+        va = mat.source.from_numpy(V.to_numpy())
+        np_sol = mat.apply_inverse_adjoint(va, mu=mu, least_squares=least_squares).to_numpy()
+        block_sol = []
+        start, end = 0, 0
+        for i in range(len(self.source.subspaces)):
+            end += self.source.subspaces[i].dim
+            block_sol.append(np_sol[:, start:end])
+            start += self.source.subspaces[i].dim
+        return BlockVectorArray([self.source.subspaces[i].from_numpy(block_sol[i]) for i in range(len(block_sol))])
 
     def assemble(self, mu=None):
         blocks = np.empty(self.blocks.shape, dtype=object)
