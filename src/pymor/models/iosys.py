@@ -15,7 +15,7 @@ from pymor.core.defaults import defaults
 from pymor.models.interface import Model
 from pymor.operators.block import (BlockOperator, BlockRowOperator, BlockColumnOperator, BlockDiagonalOperator,
                                    SecondOrderModelOperator)
-from pymor.operators.constructions import IdentityOperator, LincombOperator, ZeroOperator
+from pymor.operators.constructions import IdentityOperator, LincombOperator, ZeroOperator, AlgebraicConditionOperator
 from pymor.operators.numpy import NumpyMatrixOperator
 from pymor.parameters.base import Mu, Parameters
 from pymor.tools.formatrepr import indent_value
@@ -862,7 +862,49 @@ class LTIModel(InputStateOutputModel):
 
     @cached
     def linf_norm(self, mu=None, return_fpeak=False, ab13dd_equilibrate=False):
-        raise NotImplementedError
+        """Compute the L_infinity-norm of the |LTIModel|.
+
+        Parameters
+        ----------
+        mu
+            |Parameter|.
+        return_fpeak
+            Whether to return the frequency at which the maximum is achieved.
+        ab13dd_equilibrate
+            Whether `slycot.ab13dd` should use equilibration.
+
+        Returns
+        -------
+        norm
+            L_infinity-norm.
+        fpeak
+            Frequency at which the maximum is achieved (if `return_fpeak` is `True`).
+        """
+        if not config.HAVE_SLYCOT:
+            raise NotImplementedError
+        if not return_fpeak:
+            return self.hinf_norm(mu=mu, return_fpeak=True, ab13dd_equilibrate=ab13dd_equilibrate)[0]
+
+        mu = self.parse_parameter(mu)
+        A, B, C, D, E = (op.assemble(mu=mu) for op in [self.A, self.B, self.C, self.D, self.E])
+
+        if self.order >= sparse_min_size():
+            for op_name in ['A', 'B', 'C', 'D', 'E']:
+                op = locals()[op_name]
+                if not isinstance(op, NumpyMatrixOperator) or op.sparse:
+                    self.logger.warning(f'Converting operator {op_name} to a NumPy array.')
+
+        from slycot import ab13dd
+        dico = 'C' if self.cont_time else 'D'
+        jobe = 'I' if isinstance(self.E, IdentityOperator) else 'G'
+        equil = 'S' if ab13dd_equilibrate else 'N'
+        jobd = 'Z' if isinstance(self.D, ZeroOperator) else 'D'
+        A, B, C, D, E = (to_matrix(op, format='dense') for op in [A, B, C, D, E])
+        # ab13dd computes the L_infinity norm
+        norm, fpeak = ab13dd(dico, jobe, equil, jobd,
+                             self.order, self.input_dim, self.output_dim,
+                             A, E, B, C, D)
+        return norm, fpeak
 
     @cached
     def hinf_norm(self, mu=None, return_fpeak=False, ab13dd_equilibrate=False):
@@ -2538,7 +2580,6 @@ class StokesDescriptorModel(InputStateOutputModel):
         """
         Project idx-2 DAE to dense ODE.
         """
-        # to do: use SVD of projector for smaller dimension
         from pymor.algorithms.to_matrix import to_matrix
 
         Anp = to_matrix(self.A, format='dense')
@@ -2573,3 +2614,11 @@ class StokesDescriptorModel(InputStateOutputModel):
         E_lti = Q.T @ Enp.T
 
         return LTIModel.from_matrices(A_lti, B_lti, C_lti.T, None, E_lti)
+
+    def project_on_hidden_manifold(self, V):
+        """
+        Project VectorArray V on hidden manifold, such that it holds G^T W = 0
+        where W is the projected VectorArray.
+        """
+        Ehm = AlgebraicConditionOperator(self.E, self.G)
+        return self.E.apply(Ehm.apply_inverse(V))

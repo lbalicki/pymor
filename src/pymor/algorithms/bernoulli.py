@@ -74,7 +74,7 @@ def solve_bernoulli(A, E, B, trans=False, maxiter=100, after_maxiter=3, tol=1e-8
         A = 0.5 * ((1 / c) * A + c * AinvTET.conj().T @ E)
         BT = (1 / np.sqrt(2 * c)) * np.vstack((B.conj().T, c * B.conj().T @ AinvTET))
         Q, R, perm = spla.qr(BT, mode='economic', pivoting=True)
-        B = np.eye(n)[perm].T @ R.conj().T  # can this be done via indexing?
+        B = np.eye(n)[perm].T @ R.conj().T
         if after_iter > after_maxiter:
             break
         rnorm = spla.norm(A - Aprev) / spla.norm(A)
@@ -84,7 +84,6 @@ def solve_bernoulli(A, E, B, trans=False, maxiter=100, after_maxiter=3, tol=1e-8
     Q, R, _ = spla.qr(E.conj() - A.conj(), pivoting=True)
     nsp_rk = 0
     for r in R:
-        i += 1
         if np.allclose(r, np.zeros(r.shape)):
             nsp_rk = nsp_rk + 1
     Q = Q[:, n-nsp_rk:].conj()

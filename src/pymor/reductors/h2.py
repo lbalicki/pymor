@@ -764,10 +764,10 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
         if projection == 'orth':
             gram_schmidt(self.V, atol=0, rtol=0, copy=False)
             gram_schmidt(self.W, atol=0, rtol=0, copy=False)
-        elif projection == 'biorth':
+        elif projection == 'Eorth':
             gram_schmidt_biorth(self.V, self.W, product=fom.E, copy=False)
         self._pg_reductor = LTIPGReductor(fom, self.W, self.V,
-                                          projection == 'biorth')
+                                          projection == 'Eorth')
 
     @staticmethod
     def _unstable_rom_to_sigma_b_c(rom):
@@ -780,7 +780,7 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
         B = to_matrix(rom.B, format='dense')
         C = to_matrix(rom.C, format='dense')
         E = to_matrix(rom.E, format='dense')
-        # there seems to be issues with the default balanced=True option
+
         P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), e=E.T, balanced=False)
         F = E @ P @ C.T
         AF = A - F @ C
@@ -805,9 +805,14 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
                        for sigma_old in self._conv_data[1:]
                        if sigma_old is not None)
         else:
-            # H2-gap norm of difference / L2-norm of new rom
-            # to do: compute and use coefficient in error estimate
-            dist = min((gap_rom_old - gap_rom).h2_norm() / rom.l2_norm()
+            A = to_matrix(rom.A, format='dense')
+            F = to_matrix(gap_rom.B, format='dense')
+            C = to_matrix(rom.C, format='dense')
+            D = np.eye(rom.C.range.dim, gap_rom.B.source.dim)
+            E = to_matrix(rom.E, format='dense')
+
+            mi = LTIModel.from_matrices(A, F, C, D, E)
+            dist = min((gap_rom_old - gap_rom).h2_norm() * mi.linf_norm() / rom.l2_norm()
                        if gap_rom_old is not None
                        else np.inf
                        for gap_rom_old in self._conv_data[1:])
