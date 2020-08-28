@@ -21,15 +21,18 @@ def test_dense(n, with_E, trans):
     np.random.seed(0)
     E = -ortho_group.rvs(dim=n)
     A = np.diag(np.concatenate((np.arange(-n + 4, 0), np.arange(1, 5)))) @ E
+    A = A + 1.j * A
     B = np.random.randn(n, 1)
 
     if not trans:
-        B = B.T
+        B = B.conj().T
 
     Yp = solve_bernoulli(A, E, B, trans=trans)
-    X = Yp @ Yp.T
+    X = Yp @ Yp.conj().T
 
     if not trans:
-        assert spla.norm(A @ X @ E.T + E @ X @ A.T - E @ X @ B.T @ B @ X @ E.T) / spla.norm(X) < 1e-9
+        assert spla.norm(A @ X @ E.conj().T + E @ X @ A.conj().T
+                         - E @ X @ B.conj().T @ B @ X @ E.conj().T) / spla.norm(X) < 1e-9
     else:
-        assert spla.norm(A.T @ X @ E + E.T @ X @ A - E.T @ X @ B @ B.T @ X @ E) / spla.norm(X) < 1e-9
+        assert spla.norm(A.conj().T @ X @ E + E.conj().T @ X @ A
+                         - E.conj().T @ X @ B @ B.conj().T @ X @ E) / spla.norm(X) < 1e-9

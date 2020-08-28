@@ -10,7 +10,7 @@ from pymor.operators.numpy import NumpyMatrixOperator
 
 from itertools import chain, product
 import pytest
-from .lyapunov import fro_norm, conv_diff_1d_fd, conv_diff_1d_fem, _check_availability
+from pymortests.lyapunov import fro_norm, conv_diff_1d_fd, conv_diff_1d_fem, _check_availability
 
 
 n_list_small = [10, 20]
@@ -24,7 +24,8 @@ ricc_lrcf_solver_list_small = [
 ]
 ricc_lrcf_solver_list_big = [
     'pymess_lrnm',
-    'lrradi'
+    'lrradi',
+    'newton'
 ]
 
 
@@ -102,6 +103,10 @@ def test_ricc_lrcf(n, m, p, with_E, with_R, with_S, trans, solver):
 
     Z = Zva.to_numpy().T
     assert relative_residual(A, E, B, C, R, S, Z, trans) < 1e-8
+
+
+test_ricc_lrcf(200, 2, 3, True, False, False, False, 'lrnadi')
+test_ricc_lrcf(200, 2, 3, True, False, False, False, 'pymess_lrnm')
 
 
 @pytest.mark.parametrize('n', n_list_small)

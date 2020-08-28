@@ -3,6 +3,7 @@
 # License: BSD 2-Clause License (http://opensource.org/licenses/BSD-2-Clause)
 
 import numpy as np
+import scipy.linalg as spla
 
 from pymor.operators.constructions import IdentityOperator, ZeroOperator
 from pymor.operators.interface import Operator
@@ -88,12 +89,11 @@ class BlockOperatorBase(Operator):
 
         return self.source.make_array(U_blocks) if self.blocked_source else U_blocks[0]
 
-    # remove this and add NumpyBlockOperator
-    def apply_inverse(self, V, mu=None, least_squares=False):
+    def apply_inverse(self, V, mu=None, initial_guess=None, least_squares=False):
         from pymor.algorithms.to_matrix import to_matrix
-        mat = NumpyMatrixOperator(to_matrix(self))
-        va = mat.source.from_numpy(V.to_numpy())
-        np_sol = mat.apply_inverse(va, mu=mu, least_squares=least_squares).to_numpy()
+        block_mat = NumpyMatrixOperator(to_matrix(self))
+        va = block_mat.source.from_numpy(V.to_numpy())
+        np_sol = block_mat.apply_inverse(va, mu=mu, initial_guess=None, least_squares=least_squares).to_numpy()
         block_sol = []
         start, end = 0, 0
         for i in range(len(self.source.subspaces)):
@@ -102,11 +102,12 @@ class BlockOperatorBase(Operator):
             start += self.source.subspaces[i].dim
         return BlockVectorArray([self.source.subspaces[i].from_numpy(block_sol[i]) for i in range(len(block_sol))])
 
-    def apply_inverse_adjoint(self, V, mu=None, least_squares=False):
+    def apply_inverse_adjoint(self, V, mu=None, initial_guess=None, least_squares=False):
         from pymor.algorithms.to_matrix import to_matrix
-        mat = NumpyMatrixOperator(to_matrix(self))
-        va = mat.source.from_numpy(V.to_numpy())
-        np_sol = mat.apply_inverse_adjoint(va, mu=mu, least_squares=least_squares).to_numpy()
+        block_mat = NumpyMatrixOperator(to_matrix(self))
+        va = block_mat.source.from_numpy(V.to_numpy())
+        np_sol = block_mat.apply_inverse_adjoint(va, mu=mu, initial_guess=None,
+                                                 least_squares=least_squares).to_numpy()
         block_sol = []
         start, end = 0, 0
         for i in range(len(self.source.subspaces)):
@@ -224,6 +225,12 @@ class BlockDiagonalOperator(BlockOperator):
         assert U in self.source
         V_blocks = [self.blocks[i, i].apply(U.block(i), mu=mu) for i in range(self.num_range_blocks)]
         return self.range.make_array(V_blocks)
+
+    def apply2(self, V, U, mu=None):
+        assert U in self.source
+        assert V in self.range
+        return spla.block_diag(*[self.blocks[i, i].apply2(V.block(i), U.block(i), mu=mu)
+                               for i in range(self.num_range_blocks)])
 
     def apply_adjoint(self, V, mu=None):
         assert V in self.range

@@ -7,7 +7,6 @@ import scipy.linalg as spla
 
 from pymor.algorithms.gram_schmidt import gram_schmidt, gram_schmidt_biorth
 from pymor.algorithms.riccati import solve_ricc_lrcf, solve_pos_ricc_lrcf
-from pymor.algorithms.stokes_newton_lradi import solve_stokes_riccati
 from pymor.core.base import BasicObject
 from pymor.models.iosys import LTIModel, StokesDescriptorModel
 from pymor.operators.constructions import IdentityOperator
@@ -140,6 +139,26 @@ class BTReductor(GenericBTReductor):
         return 2 * sv[:0:-1].cumsum()[::-1]
 
 
+class StabilizingBTReductor(GenericBTReductor):
+    """Performs a Bernoulli stabilization before applying Balanced Truncation.
+
+    See...
+
+    Parameters
+    ----------
+    fom
+        The full-order |LTIModel| to reduce.
+    mu
+        |Parameter values|.
+    """
+    def _gramians(self):
+        return self.fom.gramian('bsc_lrcf', mu=self.mu), self.fom.gramian('bso_lrcf', mu=self.mu)
+
+    def error_bounds(self):
+        sv = self._sv_U_V()[0]
+        return 2 * sv[:0:-1].cumsum()[::-1]
+
+
 class LQGBTReductor(GenericBTReductor):
     r"""Linear Quadratic Gaussian (LQG) Balanced Truncation reductor.
 
@@ -165,10 +184,29 @@ class LQGBTReductor(GenericBTReductor):
             E = None
         options = self.solver_options
 
-        cf = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
-                             trans=False, options=options)
-        of = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
-                             trans=True, options=options)
+        import os.path
+        import pickle
+        if os.path.isfile('cf'):
+            with open('cf', 'rb') as file:
+                cf = pickle.load(file)['cf']
+        else:
+            cf = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
+                                 trans=False, options=options)
+            with open('cf', 'wb') as file:
+                pickle.dump({'cf': cf}, file)
+        if os.path.isfile('of'):
+            with open('of', 'rb') as file:
+                of = pickle.load(file)['of']
+        else:
+            of = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
+                                 trans=True, options=options)
+            with open('of', 'wb') as file:
+                pickle.dump({'of': of}, file)
+
+        from pymor.vectorarrays.constructions import DivergenceFreeVectorArray
+        cf = DivergenceFreeVectorArray(cf._va, A.range)
+        of = DivergenceFreeVectorArray(of._va, A.range)
+
         return cf, of
 
     def error_bounds(self):
@@ -193,11 +231,12 @@ class StokesLQGBTReductor(GenericBTReductor):
     def __init__(self, fom, mu=None, solver_options=None):
         assert isinstance(fom, StokesDescriptorModel)
         self.fom = fom
-        self.mu = fom.parse_parameter(mu)
+        self.mu = fom.parameters.parse(mu)
         self.V = None
         self.W = None
         self._pg_reductor = None
         self._sv_U_V_cache = None
+
 
     def _gramians(self):
         A, G, B, C, E = (getattr(self.fom, op).assemble(mu=self.mu)

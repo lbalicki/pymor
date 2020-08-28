@@ -14,8 +14,8 @@ from pymor.algorithms.krylov import tangential_rational_krylov
 from pymor.algorithms.sylvester import solve_sylv_schur
 from pymor.algorithms.to_matrix import to_matrix
 from pymor.core.base import BasicObject
-from pymor.models.iosys import InputOutputModel, LTIModel, StokesDescriptorModel
-from pymor.operators.constructions import AlgebraicConditionOperator, IdentityOperator
+from pymor.models.iosys import InputOutputModel, LTIModel
+from pymor.operators.constructions import IdentityOperator
 from pymor.parameters.base import Mu
 from pymor.reductors.basic import LTIPGReductor
 from pymor.reductors.interpolation import LTIBHIReductor, TFBHIReductor
@@ -644,22 +644,22 @@ class TFIRKAReductor(GenericIRKAReductor):
         )
 
 
-class StokesGapIRKAReductor(GenericIRKAReductor):
+class GapIRKAReductor(GenericIRKAReductor):
     """Gap-IRKA reductor.
 
     Parameters
     ----------
     fom
-        The full-order |StokesDescriptorModel| to reduce.
+        The full-order |LTIModel| to reduce.
     mu
         |Parameter|.
     """
     def __init__(self, fom, mu=None):
-        assert isinstance(fom, StokesDescriptorModel)
+        assert isinstance(fom, LTIModel)
         super().__init__(fom, mu=mu)
 
-    def reduce(self, rom0_params, tol=1e-4, maxit=100, num_prev=1, conv_crit='h2-gap',
-               projection='orth'):
+    def reduce(self, rom0_params, tol=1e-4, maxit=100, num_prev=1, conv_crit='htwogap',
+               projection='orth', compute_errors=False, closed_loop_fom=None):
         r"""Reduce using gap-IRKA.
 
         Parameters
@@ -701,6 +701,15 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
               to the Euclidean inner product,
             - `'Eorth'`: projection matrix is orthogonalized with
               respect to the E product.
+        compute_errors
+            Should the absolute :math:`\mathcal{H}_2`-gap-errors of
+            intermediate reduced-order models be computed.
+
+            .. warning::
+                Computing :math:`\mathcal{H}_2`-gap-errors is expensive. Use
+                this option only if necessary.
+        closed_loop_fom
+            Closed-loop first order model used for computing errors.
 
         Returns
         -------
@@ -709,6 +718,8 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
         """
         if not self.fom.cont_time:
             raise NotImplementedError
+
+        assert not compute_errors or closed_loop_fom is not None
 
         self._clear_lists()
         sigma, b, c = self._rom0_params_to_sigma_b_c(rom0_params)
@@ -725,7 +736,8 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
             sigma, b, c, gap_rom = self._unstable_rom_to_sigma_b_c(rom)
             self._store_sigma_b_c(sigma, b, c)
             self._update_conv_data(sigma, gap_rom, conv_crit)
-            self._compute_conv_crit(rom, gap_rom, conv_crit, it)
+            self._compute_conv_crit(rom, conv_crit, it)
+            self._compute_error(gap_rom, it, compute_errors, closed_loop_fom)
             if self.conv_crit[-1] < tol:
                 break
 
@@ -757,10 +769,8 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
             if self.fom.parametric
             else self.fom
         )
-        Ahm = AlgebraicConditionOperator(self.fom.A, self.fom.G)
-        Ehm = AlgebraicConditionOperator(self.fom.E, self.fom.G)
-        self.V = tangential_rational_krylov(Ahm, Ehm, self.fom.B, b, sigma)
-        self.W = tangential_rational_krylov(Ahm, Ehm, self.fom.C, c, sigma, trans=True)
+        self.V = tangential_rational_krylov(self.fom.A, self.fom.E, self.fom.B, b, sigma, orth=False)
+        self.W = tangential_rational_krylov(self.fom.A, self.fom.E, self.fom.C, c, sigma, trans=True, orth=False)
         if projection == 'orth':
             gram_schmidt(self.V, atol=0, rtol=0, copy=False)
             gram_schmidt(self.W, atol=0, rtol=0, copy=False)
@@ -771,7 +781,7 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
 
     @staticmethod
     def _unstable_rom_to_sigma_b_c(rom):
-        poles, b, c, gap_rom = StokesGapIRKAReductor._unstable_lti_to_poles_b_c(rom)
+        poles, b, c, gap_rom = GapIRKAReductor._unstable_lti_to_poles_b_c(rom)
         return -poles, b, c, gap_rom
 
     @staticmethod
@@ -779,45 +789,62 @@ class StokesGapIRKAReductor(GenericIRKAReductor):
         A = to_matrix(rom.A, format='dense')
         B = to_matrix(rom.B, format='dense')
         C = to_matrix(rom.C, format='dense')
-        E = to_matrix(rom.E, format='dense')
 
-        P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), e=E.T, balanced=False)
-        F = E @ P @ C.T
-        AF = A - F @ C
-        poles, X = spla.eig(AF, E)
-        EX = E @ X
+        if isinstance(rom.E, IdentityOperator):
+            P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)))
+            F = P @ C.T
+            AF = A - F @ C
+            poles, X = spla.eig(AF)
+            EX = X
+        else:
+            E = to_matrix(rom.E, format='dense')
+            P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), e=E.T, balanced=False)
+            F = E @ P @ C.T
+            AF = A - F @ C
+            poles, X = spla.eig(AF, E)
+            EX = E @ X
         b = rom.B.source.from_numpy(spla.solve(EX, B))
         c = rom.C.range.from_numpy((C @ X).T)
-        gap_rom = LTIModel.from_matrices(AF, F, C, E=E)
+        mFB = np.concatenate((-F, B), axis=1)
+        gap_rom = LTIModel.from_matrices(AF, mFB, C, E=None if isinstance(rom.E, IdentityOperator) else E)
         return poles, b, c, gap_rom
 
     def _update_conv_data(self, sigma, gap_rom, conv_crit):
         del self._conv_data[-1]
         if conv_crit == 'sigma':
             self._conv_data.insert(0, sigma)
-        else:
+        elif conv_crit == 'htwogap':
             self._conv_data.insert(0, gap_rom)
 
-    def _compute_conv_crit(self, rom, gap_rom, conv_crit, it):
+    def _compute_conv_crit(self, rom, conv_crit, it):
         if conv_crit == 'sigma':
             sigma = self._conv_data[0]
             dist = min(spla.norm((sigma_old - sigma) / sigma_old, ord=np.inf)
                        for sigma_old in self._conv_data[1:]
                        if sigma_old is not None)
-        else:
+        elif conv_crit == 'htwogap':
+            gap_rom = self._conv_data[0]
             A = to_matrix(rom.A, format='dense')
-            F = to_matrix(gap_rom.B, format='dense')
             C = to_matrix(rom.C, format='dense')
-            D = np.eye(rom.C.range.dim, gap_rom.B.source.dim)
-            E = to_matrix(rom.E, format='dense')
+            F = -to_matrix(gap_rom.B, format='dense')[:, :C.shape[0]]
+            D = np.eye(rom.C.range.dim)
+            E = to_matrix(rom.E, format='dense') if isinstance(rom.E, IdentityOperator) else None
 
             mi = LTIModel.from_matrices(A, F, C, D, E)
             dist = min((gap_rom_old - gap_rom).h2_norm() * mi.linf_norm() / rom.l2_norm()
                        if gap_rom_old is not None
                        else np.inf
                        for gap_rom_old in self._conv_data[1:])
+
         self.conv_crit.append(dist)
         self.logger.info(f'Convergence criterion in iteration {it + 1}: {dist:e}')
+
+    def _compute_error(self, gap_rom, it, compute_errors, closed_loop_fom):
+        if not compute_errors:
+            return
+        h2_gap_err = (closed_loop_fom - gap_rom).h2_norm()
+        self.errors.append(h2_gap_err)
+        self.logger.info(f'H2-Gap-error in iteration {it + 1}: {h2_gap_err:e}')
 
 
 def _lti_to_poles_b_c(rom):

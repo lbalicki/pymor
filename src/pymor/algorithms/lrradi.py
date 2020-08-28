@@ -309,7 +309,7 @@ def hamiltonian_shifts(A, E, B, R, K, Z, shift_options):
 
     l = shift_options['subspace_columns']
     # always use multiple of len(R) columns
-    l = l // len(R) * len(R)
+    l = max(1, l // len(R)) * len(R)
     if len(Z) < l:
         l = len(Z)
 

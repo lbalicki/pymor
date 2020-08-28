@@ -11,7 +11,7 @@ from pymor.algorithms.rules import RuleTable, match_class
 from pymor.operators.block import BlockOperatorBase
 from pymor.operators.constructions import (AdjointOperator, ComponentProjection, Concatenation, IdentityOperator,
                                            LincombOperator, LowRankOperator, LowRankUpdatedOperator,
-                                           VectorArrayOperator, ZeroOperator)
+                                           VectorArrayOperator, ZeroOperator, LerayProjectedOperator)
 from pymor.operators.numpy import NumpyMatrixOperator
 
 
@@ -172,3 +172,25 @@ class ToMatrixRules(RuleTable):
             return np.zeros((op.range.dim, op.source.dim))
         else:
             return getattr(sps, format + '_matrix')((op.range.dim, op.source.dim))
+
+    @match_class(LerayProjectedOperator)
+    def action_LerayProjectedOperator(self, op):
+        format = self.format
+        proj_op = to_matrix(op.operator, format=format)
+        if op.projection_space is None:
+            space_E = to_matrix(op.source.E, format=format)
+            space_G = to_matrix(op.source.G, format=format)
+            spsys = sps.bmat([
+                [space_E, space_G],
+                [space_G.T, None]
+            ]).todense()
+            rhs = sps.bmat([[proj_op], [sps.csc_matrix((space_G.shape[1], proj_op.shape[0]))]]).todense()
+            Pop = space_E @ spla.solve(spsys, rhs)[0:proj_op.shape[0], 0:proj_op.shape[0]]
+            rhs = sps.bmat([[Pop.T], [sps.csc_matrix((space_G.shape[1], proj_op.shape[0]))]]).todense()
+            return spla.solve(spsys, rhs)[0:proj_op.shape[0], 0:proj_op.shape[0]].T @ space_E.T
+        elif op.projection_space == 'source':
+            sa = op.as_source_array()
+            return sa.to_numpy()
+        elif op.projection_space == 'range':
+            ra = op.as_range_array()
+            return ra.to_numpy().T

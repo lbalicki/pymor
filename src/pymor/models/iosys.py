@@ -6,7 +6,7 @@ import numpy as np
 import scipy.linalg as spla
 import scipy.sparse as sps
 
-from pymor.algorithms.bernoulli import solve_bernoulli
+from pymor.algorithms.bernoulli import bernoulli_stabilize
 from pymor.algorithms.lyapunov import solve_lyap_lrcf, solve_lyap_dense
 from pymor.algorithms.to_matrix import to_matrix
 from pymor.core.cache import cached
@@ -15,11 +15,12 @@ from pymor.core.defaults import defaults
 from pymor.models.interface import Model
 from pymor.operators.block import (BlockOperator, BlockRowOperator, BlockColumnOperator, BlockDiagonalOperator,
                                    SecondOrderModelOperator)
-from pymor.operators.constructions import IdentityOperator, LincombOperator, ZeroOperator, AlgebraicConditionOperator
+from pymor.operators.constructions import IdentityOperator, LincombOperator, ZeroOperator, LowRankOperator
 from pymor.operators.numpy import NumpyMatrixOperator
 from pymor.parameters.base import Mu, Parameters
 from pymor.tools.formatrepr import indent_value
 from pymor.vectorarrays.block import BlockVectorSpace
+from pymor.vectorarrays.constructions import DivergenceFreeVectorArray
 
 
 @defaults('value')
@@ -488,7 +489,7 @@ class LTIModel(InputStateOutputModel):
             E = IdentityOperator(BlockVectorSpace([self.solution_space, other.solution_space]))
         else:
             E = BlockDiagonalOperator([self.E, other.E])
-        return self.with_(A=A, B=B, C=C, D=D, E=E)
+        return other.with_(A=A, B=B, C=C, D=D, E=E)
 
     def __neg__(self):
         """Negate the |LTIModel|."""
@@ -656,13 +657,15 @@ class LTIModel(InputStateOutputModel):
             - `'o_lrcf'`: low-rank Cholesky factor of the observability Gramian,
             - `'c_dense'`: dense controllability Gramian,
             - `'o_dense'`: dense observability Gramian,
-            - `'gc_dense'`: dense controllability Gramian of stabilized system,
-            - `'go_dense'`: dense observability Gramian of stabilized system.
+            - `'bsc_lrcf'`: low-rank Cholesky factor of the controllability Gramian after
+                            performing Bernoulli stabilization,
+            - `'bso_lrcf'`: low-rank Cholesky factor of the observability Gramian after
+                            performing Bernoulli stabilization.
 
             .. note::
                 For `'c_lrcf'` and `'o_lrcf'` types, the method assumes the system is asymptotically
                 stable.
-                For `'c_dense'`, `'o_dense'`, `'gc_dense'` and `'go_dense'` types, the method
+                For `'c_dense'`, `'o_dense'`, `'bsc_lrcf'` and `'bso_lrcf'` types, the method
                 assumes there are no two system poles which add to zero.
         mu
             |Parameter values|.
@@ -671,13 +674,12 @@ class LTIModel(InputStateOutputModel):
         -------
         If typ is `'c_lrcf'` or `'o_lrcf'`, then the Gramian factor as a |VectorArray| from
         `self.A.source`.
-        If typ is `'c_dense'`, `'o_dense'`, `'gc_dense'` or `'go_dense'`, then the Gramian as
-        a |NumPy array|.
+        If typ is `'c_dense'` or `'o_dense'` then the Gramian as a |NumPy array|.
         """
         if not self.cont_time:
             raise NotImplementedError
 
-        assert typ in ('c_lrcf', 'o_lrcf', 'c_dense', 'o_dense', 'gc_dense', 'go_dense')
+        assert typ in ('c_lrcf', 'o_lrcf', 'c_dense', 'o_dense', 'bsc_lrcf', 'bso_lrcf')
 
         if not isinstance(mu, Mu):
             mu = self.parameters.parse(mu)
@@ -705,58 +707,20 @@ class LTIModel(InputStateOutputModel):
                                     to_matrix(E, format='dense') if E else None,
                                     to_matrix(C, format='dense'),
                                     trans=True, options=options_dense)
-        elif typ == 'gc_dense':
-            Ad = to_matrix(A, format='dense')
-            Ed = to_matrix(E, format='dense') if E else np.eye(Ad.shape[0])
-            Bd = to_matrix(B, format='dense')
-
-            ew, lev, rev = spla.eig(Ad, b=Ed, left=True)
-            unst_idx = np.where(ew.real > 0.)
-            unst_ews = ew[unst_idx]
-
-            if len(unst_ews) == 0:
-                return self.gramian('c_dense')
-
-            unst_revs = rev[:, unst_idx][:, 0, :]
-            unst_levs = lev[:, unst_idx][:, 0, :]
-
-            Et = unst_levs.conj().T @ Ed @ unst_revs
-            At = unst_levs.conj().T @ Ad @ unst_revs
-
-            Bt = unst_levs.conj().T @ Bd
-            Y = solve_bernoulli(At, Et, Bt, trans=True)
-            K = Bd.T @ unst_levs @ Y @ Y.conj().T @ unst_levs.conj().T @ Ed
-            K = K.real
-            A_stab = Ad - Bd @ K
-
-            return solve_lyap_dense(A_stab, Ed if E else None, Bd,
-                                    trans=False, options=options_dense)
-        elif typ == 'go_dense':
-            Ad = to_matrix(A, format='dense')
-            Ed = to_matrix(E, format='dense') if E else np.eye(Ad.shape[0])
-            Cd = to_matrix(C, format='dense')
-
-            ew, lev, rev = spla.eig(Ad, b=Ed, left=True)
-            unst_idx = np.where(ew.real > 0.)
-            unst_ews = ew[unst_idx]
-
-            if len(unst_ews) == 0:
-                return self.gramian('o_dense')
-
-            unst_revs = rev[:, unst_idx][:, 0, :]
-            unst_levs = lev[:, unst_idx][:, 0, :]
-
-            Et = unst_levs.conj().T @ Ed @ unst_revs
-            At = unst_levs.conj().T @ Ad @ unst_revs
-
-            Ct = Cd @ unst_revs
-            Y = solve_bernoulli(At, Et, Ct, trans=False)
-            K = Ed @ unst_revs @ Y @ Y.conj().T @ unst_revs.conj().T @ Cd.T
-            K = K.real
-            A_stab = Ad - K @ Cd
-
-            return solve_lyap_dense(A_stab, Ed if E else None, Cd,
-                                    trans=True, options=options_dense)
+        elif typ == 'bsc_lrcf':
+            Bra = B.as_range_array(mu=mu)
+            # todo: add options for bernoulli_stabilize
+            K = bernoulli_stabilize(A, E, Bra, trans=True)
+            BK = LowRankOperator(Bra, np.eye(len(Bra)), K)
+            return solve_lyap_lrcf(A-BK, E, Bra,
+                                   trans=False, options=options_lrcf)
+        elif typ == 'bso_lrcf':
+            Csa = C.as_source_array(mu=mu)
+            # todo: add options for bernoulli_stabilize
+            K = bernoulli_stabilize(A, E, Csa, trans=False)
+            KC = LowRankOperator(K, np.eye(len(K)), Csa)
+            return solve_lyap_lrcf(A-KC, E, Csa,
+                                   trans=True, options=options_lrcf)
 
     @cached
     def _hsv_U_V(self, mu=None):
@@ -819,17 +783,28 @@ class LTIModel(InputStateOutputModel):
         norm
             L_2-norm.
         """
-        if not self.cont_time:
+        if not config.HAVE_SLYCOT:
             raise NotImplementedError
-        mu = self.parse_parameter(mu)
-        if self.input_dim <= self.output_dim:
-            gc = self.gramian('gc_dense', mu=mu)
-            gcf = self.C.source.from_numpy(spla.cholesky(gc))
-            return np.sqrt(self.C.apply(gcf, mu=mu).l2_norm2().sum())
-        else:
-            go = self.gramian('go_dense', mu=mu)
-            gof = self.B.source.from_numpy(spla.cholesky(go))
-            return np.sqrt(self.B.apply_adjoint(gof, mu=mu).l2_norm2().sum())
+        if not isinstance(mu, Mu):
+            mu = self.parameters.parse(mu)
+        assert self.parameters.assert_compatible(mu)
+
+        A, B, C, D, E = (op.assemble(mu=mu) for op in [self.A, self.B, self.C, self.D, self.E])
+
+        if self.order >= sparse_min_size():
+            for op_name in ['A', 'B', 'C', 'D', 'E']:
+                op = locals()[op_name]
+                if not isinstance(op, NumpyMatrixOperator) or op.sparse:
+                    self.logger.warning(f'Converting operator {op_name} to a NumPy array.')
+
+        from slycot import ab13bd
+        dico = 'C' if self.cont_time else 'D'
+        jobn = 'L'
+        A, B, C, D, E = (to_matrix(op, format='dense') for op in [A, B, C, D, E])
+        norm = ab13bd(dico, jobn, self.order, self.input_dim, self.output_dim,
+                      spla.solve(E, A), spla.solve(E, B), C, D)
+
+        return norm
 
     @cached
     def h2_norm(self, mu=None):
@@ -2490,7 +2465,7 @@ class BilinearModel(InputStateOutputModel):
         )
 
 
-class StokesDescriptorModel(InputStateOutputModel):
+class StokesDescriptorModel(LTIModel):
     r"""Class for structured index-2 descriptor system.
 
     This class describes input-state-output systems given by
@@ -2556,69 +2531,75 @@ class StokesDescriptorModel(InputStateOutputModel):
         The |Operator| E.
     """
 
-    def __init__(self, A, G, B, C, D, E=None, estimator=None, visualizer=None, name=None):
+    def __init__(self, A, G, B, C, D, E=None, solver_options=None, estimator=None, visualizer=None, name=None):
 
         assert A.linear and A.source == A.range
         assert B.linear and B.range == A.source
         assert C.linear and C.source == A.range
 
-        D = D or ZeroOperator(C.range, B.source)
-        assert D.linear and D.source == B.source and D.range == C.range
-
         E = E or IdentityOperator(A.source)
         assert E.linear and E.source == E.range == A.source
 
         self.cont_time = True
+        self.G = G
 
-        super().__init__(B.source, A.source, C.range, cont_time=True,
+        from pymor.operators.constructions import LerayProjectedOperator
+        Aproj = LerayProjectedOperator(A, G, E)
+        Bproj = LerayProjectedOperator(B, G, E, projection_space='range')
+        Cproj = LerayProjectedOperator(C, G, E, projection_space='source')
+        Eproj = LerayProjectedOperator(E, G, E)
+
+        D = D or ZeroOperator(C.range, B.source)
+        assert D.linear and D.source == B.source and D.range == C.range
+
+        super().__init__(Aproj, Bproj, Cproj, D=D, E=Eproj, cont_time=True, solver_options=solver_options,
                          estimator=estimator, visualizer=visualizer, name=name)
 
-        self.__auto_init(locals())
+    def eval_tf(self, s, mu=None):
+        r"""Evaluate the transfer function.
 
-    @cached
-    def to_lti(self):
+        The transfer function at :math:`s` is
+
+        .. math::
+            C(\mu) (s E(\mu) - A(\mu))^{-1} B(\mu) + D(\mu).
+
+        .. note::
+            Assumes that either the number of inputs or the number of outputs is much smaller than
+            the order of the system.
+
+        Parameters
+        ----------
+        s
+            Complex number.
+        mu
+            |Parameter values|.
+
+        Returns
+        -------
+        tfs
+            Transfer function evaluated at the complex number `s`, |NumPy array| of shape
+            `(self.output_dim, self.input_dim)`.
         """
-        Project idx-2 DAE to dense ODE.
-        """
-        from pymor.algorithms.to_matrix import to_matrix
+        if not isinstance(mu, Mu):
+            mu = self.parameters.parse(mu)
+        assert self.parameters.assert_compatible(mu)
+        A = self.A
+        B = self.B
+        C = self.C
+        D = self.D
+        E = self.E
 
-        Anp = to_matrix(self.A, format='dense')
-        Enp = to_matrix(self.E, format='dense')
-        Gnp = to_matrix(self.G, format='dense')
-        Bnp = to_matrix(self.B, format='dense')
-        Cnp = to_matrix(self.C, format='dense').T
-
-        EGGT = sps.bmat([
-            [Enp, Gnp],
-            [Gnp.T, None]
-        ])
-        invEGGT = sps.linalg.splu(EGGT)
-
-        def brhs(rhs):
-            return np.vstack((rhs, np.zeros((Gnp.shape[1], rhs.shape[1]))))
-
-        Q = invEGGT.solve(brhs(Bnp))[:Anp.shape[0]]
-        B_lti = Enp @ Q
-
-        Q = invEGGT.solve(brhs(Cnp))[:Anp.shape[0]]
-        C_lti = Enp @ Q
-
-        Q = invEGGT.solve(brhs(Anp))[:Anp.shape[0]]
-        PA = Enp @ Q
-        Q = invEGGT.solve(brhs(PA.T))[:Anp.shape[0]]
-        A_lti = Q.T @ Enp.T
-
-        Q = invEGGT.solve(brhs(Enp))[:Anp.shape[0]]
-        PE = Enp @ Q
-        Q = invEGGT.solve(brhs(PE.T))[:Anp.shape[0]]
-        E_lti = Q.T @ Enp.T
-
-        return LTIModel.from_matrices(A_lti, B_lti, C_lti.T, None, E_lti)
-
-    def project_on_hidden_manifold(self, V):
-        """
-        Project VectorArray V on hidden manifold, such that it holds G^T W = 0
-        where W is the projected VectorArray.
-        """
-        Ehm = AlgebraicConditionOperator(self.E, self.G)
-        return self.E.apply(Ehm.apply_inverse(V))
+        sEmA = s * E - A
+        if self.input_dim <= self.output_dim:
+            tfs = C.apply(sEmA.apply_inverse(DivergenceFreeVectorArray(B.operator.as_range_array(),
+                                             self.B.range, is_projected=False), mu=mu),
+                          mu=mu).to_numpy().T
+        else:
+            tfs = B.apply_adjoint(sEmA.apply_inverse_adjoint(DivergenceFreeVectorArray(
+                                                             C.operator.as_source_array(),
+                                                             self.C.source, is_projected=False),
+                                                             mu=mu),
+                                  mu=mu).to_numpy().conj()
+        if not isinstance(D, ZeroOperator):
+            tfs += to_matrix(D, format='dense', mu=mu)
+        return tfs

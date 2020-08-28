@@ -128,6 +128,8 @@ def solve_ricc_lrcf(A, E, B, C, R=None, S=None, trans=False, options=None,
         from pymor.bindings.pymess import solve_ricc_lrcf as solve_ricc_impl
     elif backend == 'lrradi':
         from pymor.algorithms.lrradi import solve_ricc_lrcf as solve_ricc_impl
+    elif backend == 'lrnadi':
+        from pymor.algorithms.newton_lradi import solve_ricc_lrcf as solve_ricc_impl
     else:
         raise ValueError(f'Unknown solver backend ({backend}).')
     return solve_ricc_impl(A, E, B, C, R, S, trans=trans, options=options)
