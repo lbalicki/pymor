@@ -3,7 +3,6 @@
 # License: BSD 2-Clause License (http://opensource.org/licenses/BSD-2-Clause)
 
 import numpy as np
-import scipy.linalg as spla
 
 from pymor.operators.constructions import IdentityOperator, ZeroOperator
 from pymor.operators.interface import Operator
@@ -229,8 +228,7 @@ class BlockDiagonalOperator(BlockOperator):
     def apply2(self, V, U, mu=None):
         assert U in self.source
         assert V in self.range
-        return spla.block_diag(*[self.blocks[i, i].apply2(V.block(i), U.block(i), mu=mu)
-                               for i in range(self.num_range_blocks)])
+        return sum([self.blocks[i, i].apply2(V.block(i), U.block(i), mu=mu) for i in range(self.num_range_blocks)])
 
     def apply_adjoint(self, V, mu=None):
         assert V in self.range

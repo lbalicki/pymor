@@ -6,7 +6,6 @@ import numpy as np
 import scipy.linalg as spla
 
 from pymor.algorithms.eigs import eigs
-from pymor.algorithms.to_matrix import to_matrix
 from pymor.core.logger import getLogger
 from pymor.operators.constructions import IdentityOperator
 
@@ -121,7 +120,7 @@ def bernoulli_stabilize(A, E, B, trans=False, num_eig=50):
 
     unst_levs = A.source.empty(reserve=len(unst_ews))
     for ue in unst_ews:
-        _, lev = eigs(A, E=E, k=1, l=2, sigma=ue, right_EVP=False)
+        _, lev = eigs(A, E=E, k=1, l=3, sigma=ue, right_EVP=False)
         unst_levs.append(lev)
 
     unst_revs = rev[unst_idx[0]]
@@ -147,24 +146,25 @@ def bernoulli_stabilize(A, E, B, trans=False, num_eig=50):
 
 def bernoulli_stabilize_dense(A, E, B, trans=False):
     """"Compute Bernoulli stabilizing feedback for dense systems."""
-    if E is None:
-        E = IdentityOperator(A.source)
 
-    A = to_matrix(A, format='dense')
-    E = to_matrix(E, format='dense')
-    B = B.to_numpy().T
+    if trans:
+        B = B.T
 
     ew, lev, rev = spla.eig(A, E, True)
     unst_idx = np.where(ew.real > 0.)
     unst_ews = ew[unst_idx]
 
     if len(unst_ews) == 0:
-        return A.source.zeros(len(B))
+        return np.zeros(B.shape)
 
     unst_levs = lev[:, unst_idx][:, 0, :]
     unst_revs = rev[:, unst_idx][:, 0, :]
 
-    Mt = unst_levs.conj().T @ E @ unst_revs
+    if E is not None:
+        Mt = unst_levs.conj().T @ E @ unst_revs
+    else:
+        Mt = None
+
     At = unst_levs.conj().T @ A @ unst_revs
 
     if trans:
@@ -176,8 +176,14 @@ def bernoulli_stabilize_dense(A, E, B, trans=False):
     Xz = Yz @ Yz.conj().T
 
     if trans:
-        K = E.conj().T @ unst_levs.conj() @ Xz @ unst_levs.conj().T @ B
+        if E is None:
+            K = unst_levs.conj() @ Xz @ unst_levs.conj().T @ B
+        else:
+            K = E.conj().T @ unst_levs.conj() @ Xz @ unst_levs.conj().T @ B
     else:
-        K = E.conj().T @ unst_revs.conj() @ Xz @ unst_revs.conj().T @ B
+        if E is None:
+            K = unst_revs.conj() @ Xz @ unst_revs.conj().T @ B
+        else:
+            K = E.conj().T @ unst_revs.conj() @ Xz @ unst_revs.conj().T @ B
 
     return K.real

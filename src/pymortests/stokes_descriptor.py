@@ -11,19 +11,16 @@ import scipy.io as spio
 from pymor.algorithms.bernoulli import bernoulli_stabilize_dense
 from pymor.models.iosys import LTIModel
 from pymor.algorithms.to_matrix import to_matrix
-from pymor.operators.constructions import LerayProjectedOperator, LowRankOperator
+from pymor.operators.constructions import LerayProjectedOperator, LowRankOperator, IdentityOperator
 from pymor.operators.numpy import NumpyMatrixOperator
 from pymor.algorithms.eigs import eigs
 from pymor.algorithms.newton_lradi import solve_ricc_lrcf
 from pymor.vectorarrays.constructions import cat_arrays
 from pymor.algorithms.lradi import solve_lyap_lrcf
 
-np.random.seed(0)
-with open('fom_data', 'rb') as fom_file:
-    fom_dict = pickle.load(fom_file)
-
-fom = fom_dict['fom']
 '''
+np.random.seed(0)
+
 A = np.random.rand(10, 10)
 E = np.random.rand(10, 10)
 B = np.random.rand(10, 2)
@@ -76,46 +73,90 @@ print('apply2 after apply_inverse:', spla.norm(AprojW.to_numpy() @ Anp @ AprojV.
 
 '''
 
+def conv_diff_1d_fem(n, a, b):
+    diagonals = [-a * 2 * (n + 1) ** 2 * np.ones((n,)),
+                 (a * (n + 1) ** 2 + b * (n + 1) / 2) * np.ones((n - 1,)),
+                 (a * (n + 1) ** 2 - b * (n + 1) / 2) * np.ones((n - 1,))]
+    A = sps.diags(diagonals, [0, -1, 1], format='csc')
+    diagonals = [2 / 3 * np.ones((n,)),
+                 1 / 6 * np.ones((n - 1,)),
+                 1 / 6 * np.ones((n - 1,))]
+    E = sps.diags(diagonals, [0, -1, 1], format='csc')
+    return A, E
 
-E = 5 * np.eye(5)
+
 A = -np.eye(5)
 A[0, 0] = 1
 B = np.ones((5, 1))
 C = np.ones((1, 5))
-fom = LTIModel.from_matrices(A, B, C, E=E)
+P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), balanced=False)
+F = P @ C.T
+AF = A - F @ C
+Dinv = LTIModel.from_matrices(A, F, C, np.eye(len(C)))
+N = LTIModel.from_matrices(AF, B, C)
+fom = LTIModel.from_matrices(A, B, C)
 
-E = 3 * np.eye(3)
 A = -np.eye(3)
 A[0, 0] = 1
 B = np.ones((3, 1))
 C = np.ones((1, 3))
-rom1 = LTIModel.from_matrices(A, B, C, E=E)
-
+P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), balanced=False)
+F = P @ C.T
+AF = A - F @ C
+Dinv1 = LTIModel.from_matrices(A, F, C, np.eye(len(C)))
+N1 = LTIModel.from_matrices(AF, B, C)
+rom1 = LTIModel.from_matrices(A, B, C)
 rom1_err = fom - rom1
-K = bernoulli_stabilize_dense(rom1_err.A, rom1_err.E, rom1_err.C.as_source_array(), trans=True)
-K = rom1_err.A.source.from_numpy(K.T)
-KC = LowRankOperator(K, np.eye(len(K)), rom1_err.C.as_source_array())
-rom1_err_stab = LTIModel(rom1_err.A - KC, rom1_err.B, rom1_err.C, None, rom1_err.E)
 
-E = 4 * np.eye(4)
 A = -np.eye(4)
 A[0, 0] = 3
 B = np.ones((4, 1))
 C = np.ones((1, 4))
-rom2 = LTIModel.from_matrices(A, B, C, E=E)
-
+P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), balanced=False)
+F = P @ C.T
+AF = A - F @ C
+Dinv2 = LTIModel.from_matrices(A, F, C, np.eye(len(C)))
+N2 = LTIModel.from_matrices(AF, B, C)
+rom2 = LTIModel.from_matrices(A, B, C)
 rom2_err = fom - rom2
-K = bernoulli_stabilize_dense(rom2_err.A, rom2_err.E, rom2_err.B.as_range_array(), trans=False)
-K = rom2_err.A.source.from_numpy(K.T)
-BK = LowRankOperator(rom2_err.B.as_range_array(), np.eye(len(K)), K)
-rom2_err_stab = LTIModel(rom2_err.A - BK, rom2_err.B, rom2_err.C, None, rom2_err.E)
+
+# print('rom1_err.l2_norm()', rom1_err.l2_norm_slycot())
+# print('rom2_err.l2_norm()', rom2_err.l2_norm_slycot())
 
 
-print('rom2_err_stab.h2_norm()', rom2_err_stab.h2_norm())
-print('rom1_err_stab.h2_norm()', rom1_err_stab.h2_norm())
-print('rom1_err.l2_norm()', rom1_err.l2_norm())
-print('rom2_err.l2_norm()', rom2_err.l2_norm())
+def get_gap(rom):
+    """Based on a rom, create model which is used to evaluate H2-Gap norm."""
+    A = to_matrix(rom.A, format='dense')
+    B = to_matrix(rom.B, format='dense')
+    C = to_matrix(rom.C, format='dense')
 
+    if isinstance(rom.E, IdentityOperator):
+        P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), balanced=False)
+        F = P @ C.T
+    else:
+        E = to_matrix(rom.E, format='dense')
+        P = spla.solve_continuous_are(A.T, C.T, B.dot(B.T), np.eye(len(C)), e=E.T, balanced=False)
+        F = E @ P @ C.T
+
+    AF = A - F @ C
+    mFB = np.concatenate((-F, B), axis=1)
+    return LTIModel.from_matrices(AF, mFB, C, E=None if isinstance(rom.E, IdentityOperator) else E)
+
+
+print('rom1_err.l2_norm()', rom1_err.l2_norm_slycot())
+print('(fom - rom1) H2-Gap-Error', (get_gap(fom) - get_gap(rom1)).h2_norm())
+
+print(rom1_err.l2_norm_slycot(), '<=', Dinv1.linf_norm(), '*', (1 + fom.linf_norm()), '*', (get_gap(fom) - get_gap(rom1)).h2_norm(),
+      '=', Dinv1.linf_norm() * (1 + fom.linf_norm()) * (get_gap(fom) - get_gap(rom1)).h2_norm())
+
+print(rom1_err.l2_norm_slycot(), '<=', Dinv.linf_norm(), '*', (1 + rom1.linf_norm()), '*', (get_gap(fom) - get_gap(rom1)).h2_norm(),
+      '=', Dinv.linf_norm() * (1 + rom1.linf_norm()) * (get_gap(fom) - get_gap(rom1)).h2_norm())
+
+print(rom2_err.l2_norm_slycot(), '<=', Dinv2.linf_norm(), '*', (1 + fom.linf_norm()), '*', (get_gap(fom) - get_gap(rom2)).h2_norm(),
+      '=', Dinv2.linf_norm() * (1 + fom.linf_norm()) * (get_gap(fom) - get_gap(rom2)).h2_norm())
+
+print(rom2_err.l2_norm_slycot(), '<=', Dinv.linf_norm(), '*', (1 + rom2.linf_norm()), '*', (get_gap(fom) - get_gap(rom2)).h2_norm(),
+      '=', Dinv.linf_norm() * (1 + rom1.linf_norm()) * (get_gap(fom) - get_gap(rom2)).h2_norm())
 
 '''
 Aproj = LerayProjectedOperator(Aop, Gop, Eop)

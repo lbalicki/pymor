@@ -6,7 +6,7 @@ import numpy as np
 import scipy.linalg as spla
 import scipy.sparse as sps
 
-from pymor.algorithms.bernoulli import bernoulli_stabilize
+from pymor.algorithms.bernoulli import bernoulli_stabilize, bernoulli_stabilize_dense
 from pymor.algorithms.lyapunov import solve_lyap_lrcf, solve_lyap_dense
 from pymor.algorithms.to_matrix import to_matrix
 from pymor.core.cache import cached
@@ -771,6 +771,40 @@ class LTIModel(InputStateOutputModel):
 
     @cached
     def l2_norm(self, mu=None):
+        """Compute the L2-norm of the |LTIModel|.
+
+        Parameters
+        ----------
+        mu
+            |Parameter|.
+
+        Returns
+        -------
+        norm
+            L_2-norm.
+        """
+        if not isinstance(mu, Mu):
+            mu = self.parameters.parse(mu)
+        assert self.parameters.assert_compatible(mu)
+
+        A, B, C, D, E = (op.assemble(mu=mu) for op in [self.A, self.B, self.C, self.D, self.E])
+
+        # todo: check wether input dim > output dim and then decide which stabilization to use
+        if self.order >= sparse_min_size():
+            Csa = C.as_source_array(mu=mu)
+            K = bernoulli_stabilize(A, E, Csa, trans=True)
+            KC = LowRankOperator(K, np.eye(len(K)), Csa)
+            KD = LowRankOperator(K, np.eye(len(K)), D.as_source_array())
+            lti_stab = LTIModel(A - KC, B - KD, C, D, E)
+            return lti_stab.h2_norm()
+        else:
+            A, B, C, D, E = (to_matrix(op, format='dense') for op in [A, B, C, D, E])
+            K = bernoulli_stabilize_dense(A, E, C, trans=True)
+            lti_stab = LTIModel.from_matrices(A - K @ C, B - K @ D, C, D, E)
+            return lti_stab.h2_norm()
+
+    @cached
+    def l2_norm_slycot(self, mu=None):
         """Compute the L2-norm of the |LTIModel|.
 
         Parameters

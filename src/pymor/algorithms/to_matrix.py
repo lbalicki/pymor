@@ -175,6 +175,7 @@ class ToMatrixRules(RuleTable):
 
     @match_class(LerayProjectedOperator)
     def action_LerayProjectedOperator(self, op):
+        # todo: compute SVD of projector
         format = self.format
         proj_op = to_matrix(op.operator, format=format)
         if op.projection_space is None:

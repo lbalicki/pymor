@@ -1414,52 +1414,6 @@ class InducedNorm(ParametricObject):
         return np.sqrt(norm_squared)
 
 
-class AlgebraicConditionOperator(Operator):
-    """An |Operator| that takes an algebraic condition into account.
-
-    When solving a linear system of equations with an |AlgebraicConditionOperator|
-    it holds
-
-        op x1 + cond_op x2 = b, \\
-        cond_op^T x1 = 0,
-
-    where only x1 is returned.
-
-    """
-    def __init__(self, operator, cond_op, solver_options=None, name=None):
-        self.source = operator.source
-        self.range = operator.range
-        self.linear = operator.linear
-        from pymor.operators.block import BlockOperator
-        self.block_operator = BlockOperator([
-            [operator, cond_op],
-            [AdjointOperator(cond_op), ZeroOperator(cond_op.source, cond_op.source)]
-        ])
-        self.__auto_init(locals())
-
-    def apply_inverse(self, V, mu=None, least_squares=False):
-        rhs = BlockVectorArray([V, self.cond_op.source.zeros(len(V))])
-        return self.block_operator.apply_inverse(rhs, mu=mu, least_squares=least_squares).block(0)
-
-    def apply_inverse_adjoint(self, U, mu=None, least_squares=False):
-        rhs = BlockVectorArray([U, self.cond_op.source.zeros(len(U))])
-        return self.block_operator.apply_inverse_adjoint(rhs, mu=mu, least_squares=least_squares).block(0)
-
-    def apply(self, V):
-        raise NotImplementedError
-
-    def apply_adjoint(self, U):
-        raise NotImplementedError
-
-    def assemble(self, mu=None):
-        operator = self.operator.assemble(mu)
-        cond_op = self.cond_op.assemble(mu)
-        if operator == self.operator and cond_op == self.cond_op:
-            return self
-        else:
-            return self.__class__(operator, cond_op)
-
-
 class LerayProjectedOperator(CacheableObject, Operator):
     """An |Operator| that implicitly handles a projected operator from a |StokesDescriptorModel|.
 

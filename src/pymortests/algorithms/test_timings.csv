@@ -1,0 +1,2 @@
+version,test_dense[False-False-10],test_dense[False-False-50],test_dense[False-False-100],test_dense[False-True-10],test_dense[False-True-50],test_dense[False-True-100],test_dense[True-False-10],test_dense[True-False-50],test_dense[True-False-100],test_dense[True-True-10],test_dense[True-True-50],test_dense[True-True-100]
+gammas+892.gfdaa1a23.dirty,0.019076839000000012,0.17118792900000002,0.41252391499999996,0.07921318499999996,0.18768736099999983,0.417577815,0.05176617699999975,0.188225584,0.4249547950000001,0.051627013999999694,0.1847712450000003,0.4129866409999998

@@ -8,7 +8,7 @@ import scipy.linalg as spla
 from pymor.algorithms.gram_schmidt import gram_schmidt, gram_schmidt_biorth
 from pymor.algorithms.riccati import solve_ricc_lrcf, solve_pos_ricc_lrcf
 from pymor.core.base import BasicObject
-from pymor.models.iosys import LTIModel, StokesDescriptorModel
+from pymor.models.iosys import LTIModel
 from pymor.operators.constructions import IdentityOperator
 from pymor.parameters.base import Mu
 from pymor.reductors.basic import LTIPGReductor
@@ -184,68 +184,14 @@ class LQGBTReductor(GenericBTReductor):
             E = None
         options = self.solver_options
 
-        import os.path
-        import pickle
-        if os.path.isfile('cf'):
-            with open('cf', 'rb') as file:
-                cf = pickle.load(file)['cf']
-        else:
-            cf = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
-                                 trans=False, options=options)
-            with open('cf', 'wb') as file:
-                pickle.dump({'cf': cf}, file)
-        if os.path.isfile('of'):
-            with open('of', 'rb') as file:
-                of = pickle.load(file)['of']
-        else:
-            of = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
-                                 trans=True, options=options)
-            with open('of', 'wb') as file:
-                pickle.dump({'of': of}, file)
+        cf = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
+                             trans=False, options=options)
+        of = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
+                             trans=True, options=options)
 
         from pymor.vectorarrays.constructions import DivergenceFreeVectorArray
         cf = DivergenceFreeVectorArray(cf._va, A.range)
         of = DivergenceFreeVectorArray(of._va, A.range)
-
-        return cf, of
-
-    def error_bounds(self):
-        sv = self._sv_U_V()[0]
-        return 2 * (sv[:0:-1] / np.sqrt(1 + sv[:0:-1]**2)).cumsum()[::-1]
-
-
-class StokesLQGBTReductor(GenericBTReductor):
-    r"""Linear Quadratic Gaussian (LQG) Balanced Truncation reductor for |StokesDescriptorModel|.
-
-    See ...
-
-    Parameters
-    ----------
-    fom
-        The full-order |StokesDescriptorModel| to reduce.
-    mu
-        |Parameter|.
-    solver_options
-        The solver options to use to solve the Riccati equations.
-    """
-    def __init__(self, fom, mu=None, solver_options=None):
-        assert isinstance(fom, StokesDescriptorModel)
-        self.fom = fom
-        self.mu = fom.parameters.parse(mu)
-        self.V = None
-        self.W = None
-        self._pg_reductor = None
-        self._sv_U_V_cache = None
-
-
-    def _gramians(self):
-        A, G, B, C, E = (getattr(self.fom, op).assemble(mu=self.mu)
-                         for op in ['A', 'G', 'B', 'C', 'E'])
-        if isinstance(E, IdentityOperator):
-            E = None
-
-        cf = solve_stokes_riccati(A, E, G, B.as_range_array(), C.as_source_array(), trans=False)
-        of = solve_stokes_riccati(A, E, G, B.as_range_array(), C.as_source_array(), trans=True)
 
         return cf, of
 
