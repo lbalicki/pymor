@@ -691,9 +691,11 @@ class GapIRKAReductor(GenericIRKAReductor):
             Convergence criterion:
 
             - `'sigma'`: relative change in interpolation points
-            - `'h2-gap'`: :math:`\mathcal{H}_2-gap` distance of
+            - `'htwogap'`: :math:`\mathcal{H}_2-gap` distance of
               reduced-order models divided by :math:`\mathcal{L}_2`
               norm of new reduced-order model
+            - `'ltwo'`: relative :math:`\mathcal{L}_2` distance of
+              reduced-order models
         projection
             Projection method:
 
@@ -735,7 +737,7 @@ class GapIRKAReductor(GenericIRKAReductor):
             rom = self._pg_reductor.reduce()
             sigma, b, c, gap_rom = self._unstable_rom_to_sigma_b_c(rom)
             self._store_sigma_b_c(sigma, b, c)
-            self._update_conv_data(sigma, gap_rom, conv_crit)
+            self._update_conv_data(sigma, gap_rom, rom, conv_crit)
             self._compute_conv_crit(rom, conv_crit, it)
             self._compute_error(gap_rom, it, compute_errors, closed_loop_fom)
             if self.conv_crit[-1] < tol:
@@ -809,12 +811,14 @@ class GapIRKAReductor(GenericIRKAReductor):
         gap_rom = LTIModel.from_matrices(AF, mFB, C, E=None if isinstance(rom.E, IdentityOperator) else E)
         return poles, b, c, gap_rom
 
-    def _update_conv_data(self, sigma, gap_rom, conv_crit):
+    def _update_conv_data(self, sigma, gap_rom, rom, conv_crit):
         del self._conv_data[-1]
         if conv_crit == 'sigma':
             self._conv_data.insert(0, sigma)
         elif conv_crit == 'htwogap':
             self._conv_data.insert(0, gap_rom)
+        elif conv_crit == 'ltwo':
+            self._conv_data.insert(0, rom)
 
     def _compute_conv_crit(self, rom, conv_crit, it):
         if conv_crit == 'sigma':
@@ -835,6 +839,11 @@ class GapIRKAReductor(GenericIRKAReductor):
                        if gap_rom_old is not None
                        else np.inf
                        for gap_rom_old in self._conv_data[1:])
+        elif conv_crit == 'ltwo':
+            dist = min((rom_old - rom).l2_norm() / rom.l2_norm()
+                       if rom_old is not None
+                       else np.inf
+                       for rom_old in self._conv_data[1:])
 
         self.conv_crit.append(dist)
         self.logger.info(f'Convergence criterion in iteration {it + 1}: {dist:e}')

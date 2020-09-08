@@ -189,10 +189,6 @@ class LQGBTReductor(GenericBTReductor):
         of = solve_ricc_lrcf(A, E, B.as_range_array(), C.as_source_array(),
                              trans=True, options=options)
 
-        from pymor.vectorarrays.constructions import DivergenceFreeVectorArray
-        cf = DivergenceFreeVectorArray(cf._va, A.range)
-        of = DivergenceFreeVectorArray(of._va, A.range)
-
         return cf, of
 
     def error_bounds(self):

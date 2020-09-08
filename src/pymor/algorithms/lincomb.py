@@ -12,8 +12,7 @@ from pymor.core.exceptions import RuleNotMatchingError
 from pymor.operators.block import (BlockOperator, BlockRowOperator, BlockColumnOperator, BlockOperatorBase,
                                    BlockDiagonalOperator, SecondOrderModelOperator, ShiftedSecondOrderModelOperator)
 from pymor.operators.constructions import (ZeroOperator, IdentityOperator, VectorArrayOperator, LincombOperator,
-                                           LowRankOperator, LowRankUpdatedOperator, AlgebraicConditionOperator,
-                                           LerayProjectedOperator)
+                                           LowRankOperator, LowRankUpdatedOperator, LerayProjectedOperator)
 from pymor.vectorarrays.constructions import cat_arrays
 
 
@@ -86,13 +85,6 @@ class AssembleLincombRules(RuleTable):
             new_ops, new_coeffs = zip(*without_zero)
             return assemble_lincomb(new_ops, new_coeffs,
                                     solver_options=self.solver_options, name=self.name)
-
-    @match_class_all(AlgebraicConditionOperator)
-    def action_AlgebraicConditionOperator(self, ops):
-        if not all(op.cond_op == ops[0].cond_op for op in ops):
-            raise RuleNotMatchingError
-
-        return AlgebraicConditionOperator(LincombOperator([o.operator for o in ops], self.coefficients), ops[0].cond_op)
 
     @match_class_all(LerayProjectedOperator)
     def action_LerayProjectedOperator(self, ops):
